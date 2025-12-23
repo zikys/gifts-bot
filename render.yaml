@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: gifts-backend
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm ci && npm run build --workspace apps/backend
+    startCommand: npm run start --workspace apps/backend
+    healthCheckPath: /health
+    disk:
+      name: gifts-backend-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: BACKEND_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
