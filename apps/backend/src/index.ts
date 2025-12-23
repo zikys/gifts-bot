@@ -1,10 +1,10 @@
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
+import { MongoClient } from 'mongodb';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -31,31 +31,12 @@ type ModelsStore = {
 };
 
 const PORT = Number(process.env.PORT ?? 8080);
-const DATA_DIR = resolve(process.env.DATA_DIR ?? resolve(__dirname, '../..', 'data'));
 const CORS_ORIGIN = (process.env.CORS_ORIGIN ?? '*').trim();
 const BACKEND_TOKEN = (process.env.BACKEND_TOKEN ?? '').trim();
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN ?? '').trim();
 
-const filtersPath = resolve(DATA_DIR, 'filters.json');
-const modelsPath = resolve(DATA_DIR, 'models.json');
-
-async function safeReadJson<T>(filePath: string, fallback: T): Promise<T> {
-  try {
-    if (!existsSync(filePath)) return fallback;
-    const { readFile } = await import('node:fs/promises');
-    const raw = await readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw) as T;
-    return parsed;
-  } catch {
-    return fallback;
-  }
-}
-
-async function safeWriteJson(filePath: string, value: unknown) {
-  const tmp = `${filePath}.tmp`;
-  await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
-  await rename(tmp, filePath);
-}
+const MONGODB_URI = (process.env.MONGODB_URI ?? '').trim();
+const MONGODB_DB = (process.env.MONGODB_DB ?? 'gifts').trim();
 
 function normalizeTab(v: unknown): Tab {
   const s = String(v ?? '').toLowerCase();
@@ -146,12 +127,26 @@ app.addHook('onRequest', async (req, reply) => {
   }
 });
 
-let filtersStore: FiltersStore = {};
-let modelsStore: ModelsStore = { models: [] };
+if (!MONGODB_URI) {
+  throw new Error('MONGODB_URI is required');
+}
 
-await mkdir(DATA_DIR, { recursive: true });
-filtersStore = await safeReadJson<FiltersStore>(filtersPath, {});
-modelsStore = await safeReadJson<ModelsStore>(modelsPath, { models: [] });
+const mongo = new MongoClient(MONGODB_URI);
+await mongo.connect();
+const db = mongo.db(MONGODB_DB);
+
+type FiltersDoc = Filters & { userKey: string; updatedAt: Date };
+type ModelDoc = { name: string; createdAt: Date };
+
+const filtersCol = db.collection<FiltersDoc>('filters');
+const modelsCol = db.collection<ModelDoc>('models');
+
+await filtersCol.createIndex({ userKey: 1 }, { unique: true });
+await modelsCol.createIndex({ name: 1 }, { unique: true });
+
+app.addHook('onClose', async () => {
+  await mongo.close();
+});
 
 app.get('/health', async () => {
   return { ok: true };
@@ -181,10 +176,12 @@ app.get('/api/filters', async (req) => {
     ? verified.userId
     : String((req.query as Record<string, unknown> | undefined)?.userKey ?? 'default');
 
+  const doc = await filtersCol.findOne({ userKey });
+
   return {
     ok: true,
     userKey,
-    filters: filtersStore[userKey] ?? null,
+    filters: doc ? ({ tab: doc.tab, minTon: doc.minTon, maxTon: doc.maxTon, models: doc.models } satisfies Filters) : null,
   };
 });
 
@@ -200,8 +197,20 @@ app.put('/api/filters', async (req, reply) => {
   const body = (req.body && typeof req.body === 'object') ? (req.body as Record<string, unknown>) : {};
   const userKey = verified.userId ? verified.userId : String(body.userKey ?? 'default');
   const next = normalizeFilters(body.filters);
-  filtersStore[userKey] = next;
-  await safeWriteJson(filtersPath, filtersStore);
+  await filtersCol.updateOne(
+    { userKey },
+    {
+      $set: {
+        userKey,
+        tab: next.tab,
+        minTon: next.minTon,
+        maxTon: next.maxTon,
+        models: next.models,
+        updatedAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
   return { ok: true, userKey, filters: next };
 });
 
@@ -209,11 +218,12 @@ app.get('/api/models', async (req) => {
   const q = String((req.query as Record<string, unknown> | undefined)?.q ?? '').trim().toLowerCase();
   const limit = Math.min(500, Math.max(1, asNumber((req.query as Record<string, unknown> | undefined)?.limit, 200)));
 
-  const models = modelsStore.models
-    .filter((m) => (q ? m.toLowerCase().includes(q) : true))
-    .slice(0, limit);
+  const cursor = q
+    ? modelsCol.find({ name: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
+    : modelsCol.find({});
 
-  return { ok: true, models };
+  const docs = await cursor.sort({ name: 1 }).limit(limit).toArray();
+  return { ok: true, models: docs.map((d) => d.name) };
 });
 
 app.post('/api/models/seen', async (req, reply) => {
@@ -226,10 +236,16 @@ app.post('/api/models/seen', async (req, reply) => {
   const model = String(body.model ?? '').trim();
   if (!model) return { ok: true };
 
-  const set = new Set(modelsStore.models);
-  set.add(model);
-  modelsStore.models = Array.from(set.values()).sort((a, b) => a.localeCompare(b));
-  await safeWriteJson(modelsPath, modelsStore);
+  await modelsCol.updateOne(
+    { name: model },
+    {
+      $setOnInsert: {
+        name: model,
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
   return { ok: true };
 });
 
