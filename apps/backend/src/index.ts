@@ -116,8 +116,24 @@ const app = Fastify({
 });
 
 app.addHook('onRequest', async (req, reply) => {
+  try {
+    const origin = String((req.headers as Record<string, unknown>).origin ?? '');
+    app.log.info({ method: req.method, url: req.url, origin }, 'incoming request');
+  } catch {
+  }
+
   if (CORS_ORIGIN) {
-    reply.header('access-control-allow-origin', CORS_ORIGIN);
+    const origin = String((req.headers as Record<string, unknown>).origin ?? '').trim();
+    const allowlist = CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+
+    if (allowlist.length === 1 && allowlist[0] === '*') {
+      reply.header('vary', 'origin');
+      reply.header('access-control-allow-origin', origin || '*');
+    } else if (origin && allowlist.includes(origin)) {
+      reply.header('vary', 'origin');
+      reply.header('access-control-allow-origin', origin);
+    }
+
     reply.header('access-control-allow-headers', 'content-type,authorization,x-telegram-init-data');
     reply.header('access-control-allow-methods', 'GET,PUT,POST,OPTIONS');
   }
@@ -162,14 +178,13 @@ app.get('/miniapp/config', async () => {
   };
 });
 
-app.get('/api/filters', async (req) => {
+app.get('/api/filters', async (req, reply) => {
   const initData = String((req.headers as Record<string, unknown>)['x-telegram-init-data'] ?? '').trim();
   const verified = initData ? verifyTelegramInitData(initData) : { ok: false };
   const tokenOk = requireToken(req.headers as Record<string, unknown>);
   if (!verified.ok && !tokenOk) {
-    return {
-      ok: false,
-    };
+    reply.code(401);
+    return { ok: false };
   }
 
   const userKey = verified.userId

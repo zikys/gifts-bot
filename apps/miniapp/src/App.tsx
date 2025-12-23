@@ -58,6 +58,7 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
   const saveTimer = useRef<number | null>(null);
 
   const userKey = useMemo(() => getTelegramUserKey(), []);
@@ -73,6 +74,7 @@ export function App() {
 
   useEffect(() => {
     setLoading(true);
+    setError('');
     const initData = getTelegramInitData();
     const url = initData
       ? `${apiBase()}/api/filters`
@@ -82,7 +84,13 @@ export function App() {
     if (initData) headers['x-telegram-init-data'] = initData;
 
     fetch(url, { headers })
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (!r.ok) {
+          const t = await r.text().catch(() => '');
+          throw new Error(`filters load failed: ${r.status} ${t}`);
+        }
+        return r.json();
+      })
       .then((data: unknown) => {
         const obj = (data && typeof data === 'object') ? (data as Record<string, unknown>) : {};
         const f = obj.filters as Filters | null | undefined;
@@ -91,6 +99,9 @@ export function App() {
         if (typeof f.minTon === 'number') setMin(f.minTon);
         if (typeof f.maxTon === 'number') setMax(f.maxTon);
         if (Array.isArray(f.models)) setSelectedModels(new Set(f.models));
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => setLoading(false));
   }, [userKey]);
@@ -135,7 +146,13 @@ export function App() {
     const q = searchQuery.trim();
     const url = `${apiBase()}/api/models?q=${encodeURIComponent(q)}&limit=200`;
     fetch(url)
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (!r.ok) {
+          const t = await r.text().catch(() => '');
+          throw new Error(`models search failed: ${r.status} ${t}`);
+        }
+        return r.json();
+      })
       .then((data: unknown) => {
         const obj = (data && typeof data === 'object') ? (data as Record<string, unknown>) : {};
         const list = obj.models;
@@ -143,7 +160,8 @@ export function App() {
           setModels(list.map((m) => String(m)));
         }
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
       });
   }, [searchOpen, searchQuery]);
 
@@ -152,6 +170,12 @@ export function App() {
       <div className="mx-auto max-w-md px-4 pb-20 pt-5">
         <div className="rounded-2xl bg-panel px-4 py-4 shadow">
           <div className="text-center text-lg font-semibold">Фильтры подарков</div>
+
+          <div className="mt-2 rounded-xl bg-panel2 px-3 py-2 text-[11px] text-slate-400">
+            <div>Backend: {apiBase()}</div>
+            <div>Telegram initData: {getTelegramInitData() ? 'yes' : 'no'}</div>
+            {error ? <div className="mt-1 text-red-400">{error}</div> : null}
+          </div>
 
           <div className="mt-4 rounded-xl bg-panel2 p-3">
             <div className="flex items-center justify-between">
