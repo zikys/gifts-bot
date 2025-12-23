@@ -58,7 +58,9 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [modelsLoading, setModelsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [status, setStatus] = useState<string>('');
   const saveTimer = useRef<number | null>(null);
 
   const userKey = useMemo(() => getTelegramUserKey(), []);
@@ -75,6 +77,7 @@ export function App() {
   useEffect(() => {
     setLoading(true);
     setError('');
+    setStatus('');
     const initData = getTelegramInitData();
     const url = initData
       ? `${apiBase()}/api/filters`
@@ -106,33 +109,47 @@ export function App() {
       .finally(() => setLoading(false));
   }, [userKey]);
 
+  const saveFilters = useCallback(async (next?: Partial<Filters>) => {
+    const body = {
+      userKey,
+      filters: {
+        tab: next?.tab ?? tab,
+        minTon: next?.minTon ?? min,
+        maxTon: next?.maxTon ?? max,
+        models: next?.models ?? Array.from(selectedModels.values()),
+      },
+    };
+
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+    };
+    const initData = getTelegramInitData();
+    if (initData) headers['x-telegram-init-data'] = initData;
+
+    const res = await fetch(`${apiBase()}/api/filters`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`filters save failed: ${res.status} ${t}`);
+    }
+  }, [userKey, tab, min, max, selectedModels]);
+
   const scheduleSave = useCallback((next?: Partial<Filters>) => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      const body = {
-        userKey,
-        filters: {
-          tab: next?.tab ?? tab,
-          minTon: next?.minTon ?? min,
-          maxTon: next?.maxTon ?? max,
-          models: next?.models ?? Array.from(selectedModels.values()),
-        },
-      };
-
-      const headers: Record<string, string> = {
-        'content-type': 'application/json',
-      };
-      const initData = getTelegramInitData();
-      if (initData) headers['x-telegram-init-data'] = initData;
-
-      fetch(`${apiBase()}/api/filters`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(body),
-      }).catch(() => {
-      });
+      setStatus('');
+      setError('');
+      saveFilters(next)
+        .then(() => setStatus('Сохранено'))
+        .catch((e: unknown) => {
+          setError(e instanceof Error ? e.message : String(e));
+        });
     }, 250);
-  }, [userKey, tab, min, max, selectedModels]);
+  }, [saveFilters]);
 
   useEffect(() => {
     scheduleSave();
@@ -145,6 +162,7 @@ export function App() {
     if (!searchOpen) return;
     const q = searchQuery.trim();
     const url = `${apiBase()}/api/models?q=${encodeURIComponent(q)}&limit=200`;
+    setModelsLoading(true);
     fetch(url)
       .then(async (r) => {
         if (!r.ok) {
@@ -162,7 +180,8 @@ export function App() {
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : String(e));
-      });
+      })
+      .finally(() => setModelsLoading(false));
   }, [searchOpen, searchQuery]);
 
   return (
@@ -174,6 +193,7 @@ export function App() {
           <div className="mt-2 rounded-xl bg-panel2 px-3 py-2 text-[11px] text-slate-400">
             <div>Backend: {apiBase()}</div>
             <div>Telegram initData: {getTelegramInitData() ? 'yes' : 'no'}</div>
+            {status ? <div className="mt-1 text-emerald-400">{status}</div> : null}
             {error ? <div className="mt-1 text-red-400">{error}</div> : null}
           </div>
 
@@ -256,12 +276,21 @@ export function App() {
                 title={m}
                 subtitle=""
                 rarity=""
-                enabled={true}
+                enabled={selectedModels.has(m)}
                 onToggle={() => {
                   setSelectedModels((prev) => {
                     const next = new Set(prev);
                     if (next.has(m)) next.delete(m);
                     else next.add(m);
+                    return next;
+                  });
+                }}
+                onDelete={() => {
+                  setSelectedModels((prev) => {
+                    const next = new Set(prev);
+                    next.delete(m);
+                    const nextModels = Array.from(next.values());
+                    scheduleSave({ models: nextModels });
                     return next;
                   });
                 }}
@@ -292,8 +321,26 @@ export function App() {
                 />
 
                 <div className="mt-3 max-h-[55vh] overflow-auto rounded-xl bg-panel2 p-2">
+                  {models.length === 0 && searchQuery.trim().length > 0 ? (
+                    <button
+                      className="mb-2 w-full rounded-xl bg-panel px-3 py-3 text-left text-sm text-slate-200"
+                      onClick={() => {
+                        const m = searchQuery.trim();
+                        if (!m) return;
+                        setSelectedModels((prev) => {
+                          const next = new Set(prev);
+                          next.add(m);
+                          return next;
+                        });
+                      }}
+                    >
+                      <div className="font-semibold">Добавить модель вручную</div>
+                      <div className="mt-1 text-xs text-slate-400">{searchQuery.trim()}</div>
+                    </button>
+                  ) : null}
+
                   {models.length === 0 ? (
-                    <div className="px-2 py-3 text-xs text-slate-400">{loading ? 'Загрузка...' : 'Нет результатов'}</div>
+                    <div className="px-2 py-3 text-xs text-slate-400">{modelsLoading ? 'Загрузка...' : 'Нет результатов'}</div>
                   ) : (
                     <div className="grid grid-cols-1 gap-2">
                       {models.map((m) => {
@@ -338,7 +385,11 @@ export function App() {
             <button
               className="h-12 rounded-full bg-accent px-5 text-sm font-semibold"
               onClick={() => {
-                scheduleSave({ models: Array.from(selectedModels.values()) });
+                setStatus('');
+                setError('');
+                saveFilters({ models: Array.from(selectedModels.values()) })
+                  .then(() => setStatus('Сохранено'))
+                  .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
               }}
             >
               Добавить
@@ -350,7 +401,7 @@ export function App() {
   );
 }
 
-function GiftCard(props: { title: string; subtitle: string; rarity: string; enabled: boolean; onToggle: () => void }) {
+function GiftCard(props: { title: string; subtitle: string; rarity: string; enabled: boolean; onToggle: () => void; onDelete?: () => void }) {
   return (
     <div className="rounded-2xl bg-panel2 p-3">
       <div className="flex items-start justify-between gap-2">
@@ -368,7 +419,7 @@ function GiftCard(props: { title: string; subtitle: string; rarity: string; enab
         </label>
         <div className="flex gap-2">
           <button className="h-9 rounded-xl bg-panel px-3 text-xs font-semibold">Правка</button>
-          <button className="h-9 rounded-xl bg-panel px-3 text-xs font-semibold">Удалить</button>
+          <button className="h-9 rounded-xl bg-panel px-3 text-xs font-semibold" onClick={props.onDelete}>Удалить</button>
         </div>
       </div>
     </div>

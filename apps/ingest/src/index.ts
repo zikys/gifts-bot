@@ -33,8 +33,16 @@ async function backendGetFilters(): Promise<Filters | null> {
 
   try {
     const url = `${BACKEND_URL}/api/filters?userKey=${encodeURIComponent(FILTER_USER_KEY)}`;
-    const res = await fetch(url);
+    const headers: Record<string, string> = {};
+    if (BACKEND_TOKEN) headers.authorization = `Bearer ${BACKEND_TOKEN}`;
+    const res = await fetch(url, { headers });
     if (!res.ok) {
+      try {
+        const t = await res.text();
+        console.warn(`backendGetFilters failed: ${res.status} ${t}`);
+      } catch {
+        console.warn(`backendGetFilters failed: ${res.status}`);
+      }
       filtersCache = null;
       filtersCacheAt = now;
       return null;
@@ -62,11 +70,19 @@ async function backendPostSeenModel(model: string) {
   if (BACKEND_TOKEN) headers.authorization = `Bearer ${BACKEND_TOKEN}`;
 
   try {
-    await fetch(`${BACKEND_URL}/api/models/seen`, {
+    const res = await fetch(`${BACKEND_URL}/api/models/seen`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ model: m }),
     });
+    if (!res.ok) {
+      try {
+        const t = await res.text();
+        console.warn(`backendPostSeenModel failed: ${res.status} ${t}`);
+      } catch {
+        console.warn(`backendPostSeenModel failed: ${res.status}`);
+      }
+    }
   } catch {
   }
 }
@@ -147,6 +163,10 @@ const BACKEND_TOKEN = (process.env.BACKEND_TOKEN ?? '').trim();
 const FILTER_USER_KEY = (process.env.FILTER_USER_KEY ?? 'default').trim();
 
 const FRAGMENT_BUY_URL_TEMPLATE = (process.env.FRAGMENT_BUY_URL_TEMPLATE ?? '').trim();
+
+console.log(`Backend URL: ${BACKEND_URL || '(empty)'}`);
+console.log(`Backend token: ${BACKEND_TOKEN ? 'set' : 'empty'}`);
+console.log(`Filter user key: ${FILTER_USER_KEY}`);
 
 const TEST_ALERT = (process.env.TEST_ALERT ?? '').trim() === '1';
 const TEST_NFT_ADDRESS = (process.env.TEST_NFT_ADDRESS ?? '').trim();
