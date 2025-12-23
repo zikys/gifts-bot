@@ -1,22 +1,17 @@
 services:
   - type: web
     name: gifts-backend
-    runtime: node
-    plan: starter
-    region: frankfurt
-    buildCommand: npm ci && npm run build --workspace apps/backend
-    startCommand: npm run start --workspace apps/backend
-    healthCheckPath: /health
-    disk:
-      name: gifts-backend-data
-      mountPath: /data
-      sizeGB: 1
+    env: node
+    plan: free
+    rootDir: apps/backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
     envVars:
-      - key: DATA_DIR
-        value: /data
-      - key: CORS_ORIGIN
-        value: "*"
-      - key: BACKEND_TOKEN
-        sync: false
+      - key: NODE_VERSION
+        value: 18.0.0
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: BACKEND_TOKEN
+        sync: false
+      - key: DATA_DIR
+        value: ./data
