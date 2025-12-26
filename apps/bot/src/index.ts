@@ -6,12 +6,23 @@ import { Telegraf, type Context } from 'telegraf';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const rootEnvPath = resolve(__dirname, '../../..', '.env');
-if (existsSync(rootEnvPath)) {
-  dotenv.config({ path: rootEnvPath });
-} else {
-  dotenv.config();
+
+function findRootEnvPath(): string | null {
+  const starts = [process.cwd(), __dirname];
+  for (const start of starts) {
+    let cur = start;
+    for (let i = 0; i < 10; i++) {
+      const p = resolve(cur, '.env');
+      if (existsSync(p)) return p;
+      const parent = dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  }
+  return null;
 }
+
+dotenv.config({ path: findRootEnvPath() ?? undefined });
 
 const BOT_TOKEN = (process.env.BOT_TOKEN ?? '').trim();
 const MINIAPP_URL = (process.env.MINIAPP_URL ?? 'http://localhost:3000').trim();

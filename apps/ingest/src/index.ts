@@ -6,12 +6,23 @@ import WebSocket from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const rootEnvPath = resolve(__dirname, '../../..', '.env');
-if (existsSync(rootEnvPath)) {
-  dotenv.config({ path: rootEnvPath });
-} else {
-  dotenv.config();
+
+function findRootEnvPath(): string | null {
+  const starts = [process.cwd(), __dirname];
+  for (const start of starts) {
+    let cur = start;
+    for (let i = 0; i < 10; i++) {
+      const p = resolve(cur, '.env');
+      if (existsSync(p)) return p;
+      const parent = dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  }
+  return null;
 }
+
+dotenv.config({ path: findRootEnvPath() ?? undefined });
 
 type Filters = {
   tab: 'listing' | 'sale' | 'rent';
@@ -22,7 +33,7 @@ type Filters = {
 
 let filtersCache: Filters | null | undefined;
 let filtersCacheAt = 0;
-const FILTERS_CACHE_TTL_MS = 5000;
+const FILTERS_CACHE_TTL_MS = 1000;
 
 async function backendGetFilters(): Promise<Filters | null> {
   if (!BACKEND_URL) return null;
@@ -202,25 +213,25 @@ async function sendTestAlert() {
     ? `${listing.model}${listing.number ? ' #' + listing.number : ''}`
     : listing.nftAddress;
 
-  const giftTitleLinked = `<a href="${escapeHtml(buyUrl)}">${escapeHtml(giftTitlePlain)}</a>`;
+  const giftTitleLinked = `[${escapeMarkdownV2(giftTitlePlain)}](${escapeMarkdownV2Url(buyUrl)})`;
 
   const priceLine = listing.priceTon !== undefined
-    ? `Цена: <b>${listing.priceTon.toFixed(2)} TON</b>`
-    : `Цена: <b>неизвестно</b>`;
+    ? `Цена: *${escapeMarkdownV2(listing.priceTon.toFixed(2))} TON*`
+    : 'Цена: *неизвестно*';
 
   const floorGiftLine = Number.isFinite(FLOOR_TON) && FLOOR_TON > 0
-    ? `Флор гифта: <b>${FLOOR_TON.toFixed(2)} TON</b>`
+    ? `Флор гифта: *${escapeMarkdownV2(FLOOR_TON.toFixed(2))} TON*`
     : undefined;
 
   const floorModelLine = Number.isFinite(FLOOR_MODEL_TON) && FLOOR_MODEL_TON > 0
-    ? `Флор модели: <b>${FLOOR_MODEL_TON.toFixed(2)} TON</b>`
+    ? `Флор модели: *${escapeMarkdownV2(FLOOR_MODEL_TON.toFixed(2))} TON*`
     : undefined;
 
   const caption = [
-    '✅ <b>ЛИСТИНГ</b>',
+    '*✅ ЛИСТИНГ*',
     giftTitleLinked,
-    listing.model ? `Модель: <b>${escapeHtml(listing.model)}</b>` : undefined,
-    listing.background ? `Фон: <b>${escapeHtml(listing.background)}</b>` : undefined,
+    listing.model ? `Модель: *${escapeMarkdownV2(listing.model)}*` : undefined,
+    listing.background ? `Фон: *${escapeMarkdownV2(listing.background)}*` : undefined,
     floorGiftLine,
     floorModelLine,
     priceLine,
@@ -230,8 +241,8 @@ async function sendTestAlert() {
     caption,
     photoUrl: listing.imageUrl,
     buyUrl,
-    buyButtonText: 'Купить',
-    openInTelegramUrl: `https://tonviewer.com/${listing.nftAddress}?section=nft`,
+    buyButtonText: 'Ссылка на маркет',
+    openInTelegramUrl: `https://t.me/nft/${listing.nftAddress}`,
   });
 }
 
@@ -303,15 +314,14 @@ async function sendTelegramAlert(opts: {
   buyButtonText: string;
   openInTelegramUrl: string;
 }) {
+  const miniappButton = MINIAPP_URL.toLowerCase().startsWith('https://')
+    ? ({ text: 'Аппка', web_app: { url: MINIAPP_URL } } as const)
+    : ({ text: 'Аппка', url: MINIAPP_URL } as const);
+
   const reply_markup = {
     inline_keyboard: [
       [
-        {
-          text: 'Открыть в Telegram',
-          url: opts.openInTelegramUrl,
-        },
-      ],
-      [
+        miniappButton,
         {
           text: opts.buyButtonText,
           url: opts.buyUrl,
@@ -326,7 +336,7 @@ async function sendTelegramAlert(opts: {
       chat_id: ALERT_CHAT_ID,
       photo: opts.photoUrl,
       caption: opts.caption,
-      parse_mode: 'HTML',
+      parse_mode: 'MarkdownV2',
       reply_markup,
     };
 
@@ -351,7 +361,7 @@ async function sendTelegramAlert(opts: {
   const body = {
     chat_id: ALERT_CHAT_ID,
     text: opts.caption,
-    parse_mode: 'HTML',
+    parse_mode: 'MarkdownV2',
     disable_web_page_preview: true,
     reply_markup,
   };
@@ -769,30 +779,30 @@ async function handleTrace(p: TraceParams) {
       ? `${listing.model}${listing.number ? ' #' + listing.number : ''}`
       : listing.nftAddress;
 
-    const giftTitleLinked = `<a href="${escapeHtml(buyUrl)}">${escapeHtml(giftTitlePlain)}</a>`;
+    const giftTitleLinked = `[${escapeMarkdownV2(giftTitlePlain)}](${escapeMarkdownV2Url(buyUrl)})`;
 
     const priceLine = listing.priceTon !== undefined
-      ? `Цена: <b>${listing.priceTon.toFixed(2)} TON</b>`
-      : `Цена: <b>неизвестно</b>`;
+      ? `Цена: *${escapeMarkdownV2(listing.priceTon.toFixed(2))} TON*`
+      : 'Цена: *неизвестно*';
 
     const floorGiftLine = Number.isFinite(FLOOR_TON) && FLOOR_TON > 0
-      ? `Флор гифта: <b>${FLOOR_TON.toFixed(2)} TON</b>`
+      ? `Флор гифта: *${escapeMarkdownV2(FLOOR_TON.toFixed(2))} TON*`
       : undefined;
 
     const floorModelLine = Number.isFinite(FLOOR_MODEL_TON) && FLOOR_MODEL_TON > 0
-      ? `Флор модели: <b>${FLOOR_MODEL_TON.toFixed(2)} TON</b>`
+      ? `Флор модели: *${escapeMarkdownV2(FLOOR_MODEL_TON.toFixed(2))} TON*`
       : undefined;
 
     const recentSales = listing.model ? await getRecentSalesForModel(listing.model) : null;
     const recentSalesLine = (recentSales && recentSales.length > 0)
-      ? `Последние продажи модели: ${recentSales.map((p) => `<b>${p.toFixed(2)} TON</b>`).join(' / ')}`
+      ? `Последние продажи: ${recentSales.map((p) => `*${escapeMarkdownV2(p.toFixed(2))} TON*`).join(' / ')}`
       : undefined;
 
     const caption = [
-      '✅ <b>ЛИСТИНГ</b>',
+      '*✅ ЛИСТИНГ*',
       giftTitleLinked,
-      listing.model ? `Модель: <b>${escapeHtml(listing.model)}</b>` : undefined,
-      listing.background ? `Фон: <b>${escapeHtml(listing.background)}</b>` : undefined,
+      listing.model ? `Модель: *${escapeMarkdownV2(listing.model)}*` : undefined,
+      listing.background ? `Фон: *${escapeMarkdownV2(listing.background)}*` : undefined,
       floorGiftLine,
       floorModelLine,
       recentSalesLine,
@@ -804,17 +814,18 @@ async function handleTrace(p: TraceParams) {
       caption,
       photoUrl: listing.imageUrl,
       buyUrl,
-      buyButtonText: isLowBudget ? 'Купить' : 'Купить',
-      openInTelegramUrl: `https://tonviewer.com/${listing.nftAddress}?section=nft`,
+      buyButtonText: isLowBudget ? 'Ссылка на маркет' : 'Ссылка на маркет',
+      openInTelegramUrl: `https://t.me/nft/${listing.nftAddress}`,
     });
   }
 }
 
-function escapeHtml(s: string) {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+function escapeMarkdownV2(s: string) {
+  return s.replaceAll(/([_\-*\[\]()~`>#+=|{}.!\\])/g, '\\$1');
+}
+
+function escapeMarkdownV2Url(url: string) {
+  return url.replaceAll(/([)\\])/g, '\\$1');
 }
 
 function connect() {
@@ -855,7 +866,7 @@ function connect() {
 
   ws.on('message', async (data: WebSocket.RawData) => {
     try {
-      const msg = JSON.parse(data.toString()) as TonApiWsResponse;
+      const msg = JSON.parse(data.toString('utf8')) as TonApiWsResponse;
       if (msg.method === 'trace') {
         const p = msg.params as TraceParams;
         if (!p?.hash || !Array.isArray(p.accounts)) return;
